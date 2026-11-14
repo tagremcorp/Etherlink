@@ -37,12 +37,13 @@ These run two copies of the app’s headless probe against one Mac’s own Ether
 - Accessibility and Input Monitoring grants, including recovery from stale grants (see below).
 - Switching control with the shortcut and forwarding keyboard and mouse to the other Mac.
 - Stable signing: an update signed with the same certificate kept its permissions with no re-grant.
+- v0.4.0 screen-edge switching between the two Macs, with 0.4.0 installed on both.
 
 ## Not yet verified on hardware
 
 - Behaviour under sustained fast input (drag and scroll coalescing under real load), and latency.
 - The parked pointer, menu bar controls and window-close behaviour introduced in v0.3.3.
-- v0.4.0 screen-edge crossing in both directions, layout matching between two Macs, typing into a password field on the receiving Mac, and the locked-screen and secure-input messages.
+- v0.4.0 layout matching between two Macs, typing into a password field on the receiving Mac, and the locked-screen and secure-input messages.
 - Sleep and wake, adapter removal and address changes during active control.
 - Display reconfiguration while forwarding.
 - Intel Macs and macOS versions before 27.
