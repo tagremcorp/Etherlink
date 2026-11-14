@@ -12,7 +12,7 @@ trap '"$lsregister" -u "$staging/EtherLink.app" 2>/dev/null; rm -rf "$staging"; 
 ditto "$output_dir/EtherLink.app" "$staging/EtherLink.app"
 ln -s /Applications "$staging/Applications"
 cat > "$staging/Install EtherLink.txt" <<'TEXT'
-EtherLink — Keyboard and mouse sharing prototype 0.3.3
+EtherLink — Keyboard and mouse sharing prototype 0.4.0
 
 1. Drag EtherLink.app into Applications, then eject this disk image.
 2. Open EtherLink from Applications on both Macs.
@@ -29,9 +29,9 @@ EtherLink — Keyboard and mouse sharing prototype 0.3.3
 
 Save the pairing key to Keychain on both Macs for automatic reconnection after app restart. Auto-reconnect polls every five seconds, only through the selected Ethernet adapter. Disconnect/Cancel stops automatic retries.
 
-Install version 0.3.3 on BOTH Macs (0.3.0 to 0.3.2 can pair with it, but 0.2.x and older cannot negotiate roles). Closing the EtherLink window keeps it running in the menu bar (cable icon at the top of the screen); use Quit EtherLink there to stop it. Use "Choose keyboard and mouse source" on either Mac to change the choice later. Reconfiguration immediately returns input locally and pauses forwarding. Confirmed choices restore automatically after reconnect. Choose later dismisses both prompts and leaves sharing paused. Quit the old app before replacing it. Only run the installed copy from Applications.
+Install version 0.4.0 on BOTH Macs. 0.3.x can still pair with it, but returning through the screen edge and keyboard-layout matching need 0.4.0 on both. Closing the EtherLink window keeps it running in the menu bar (cable icon at the top of the screen); use Quit EtherLink there to stop it. Use "Choose keyboard and mouse source" on either Mac to change the choice later. Reconfiguration immediately returns input locally and pauses forwarding. Confirmed choices restore automatically after reconnect. Choose later dismisses both prompts and leaves sharing paused. Quit the old app before replacing it. Only run the installed copy from Applications.
 
-This prototype supports shortcut switching, keyboard, mouse buttons, relative movement, scrolling and dragging. Screen-edge switching/PBP mapping is not implemented yet. Hardware input-sharing behavior still needs testing on both Macs. Protected password entry, login screens and FileVault are unsupported.
+Screen-edge switching: on the keyboard Mac set "Other Mac's screen is" (for two PBP halves side by side, "To the right" on the Mac shown on the left), then push the pointer against that edge. Typed characters match across different keyboard layouts. You can type into password fields on the receiving Mac. The login window, a locked screen and FileVault startup still need that Mac's own keyboard.
 
 Requires macOS 13 or later. Universal app for Intel and Apple Silicon; Intel execution and older macOS versions have not been tested.
 

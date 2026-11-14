@@ -10,6 +10,7 @@ private typealias ViewState<Value> = SwiftUI.State<Value>
 struct EntryPoint {
     static func main() {
         if CommandLine.arguments.contains("--probe") { Probe.run() }
+        else if CommandLine.arguments.contains("--layout-check") { Probe.layoutCheck() }
         else { EtherLinkApp.main() }
     }
 }
@@ -92,6 +93,8 @@ struct SetupView: View {
     @AppStorage("shortcutModifiers") private var shortcutModifiers = 3
     @AppStorage("shortcutKeyName") private var shortcutKeyName = ""
     @AppStorage("autoReconnect") private var autoReconnect = true
+    @AppStorage("edgeSide") private var edgeSide = ""
+    @AppStorage("translateLayouts") private var translateLayouts = true
     @AppStorage("adapter") private var adapterID = ""
     @AppStorage("peer") private var peer = ""
     @AppStorage("listen") private var listen = true
@@ -217,6 +220,18 @@ struct SetupView: View {
                         }.disabled(input.remote)
                         Text("Click Record, then press your preferred key combination. Esc cancels. Shortcuts use physical keys; record again if you change keyboard layout. Avoid combinations already used by macOS or other apps.").font(.caption).foregroundStyle(.secondary)
                         Text("Emergency return: Control–Option–Escape. Function keys may also require Fn on Apple keyboards.").font(.caption).bold()
+                        Picker("Other Mac’s screen is", selection: $edgeSide) {
+                            Text("Off (shortcut only)").tag("")
+                            Text("To the left").tag(ScreenSide.left.rawValue)
+                            Text("To the right").tag(ScreenSide.right.rawValue)
+                            Text("Above").tag(ScreenSide.top.rawValue)
+                            Text("Below").tag(ScreenSide.bottom.rawValue)
+                        }.frame(maxWidth: 360).accessibilityIdentifier("edgeSide")
+                            .onChange(of: edgeSide) { value in input.edgeSide = ScreenSide(rawValue: value) }
+                        Text("Set this on the keyboard Mac. Push the pointer firmly against that outer screen edge to move to the other Mac, and against the facing edge there to come back. Edges shared with another display on the same Mac never switch, so arrange displays in System Settings → Displays so the edge facing the other Mac is an outer edge. For two PBP halves side by side, choose “To the right” on the Mac shown on the left.").font(.caption).foregroundStyle(.secondary)
+                        Toggle("Match typed characters across keyboard layouts", isOn: $translateLayouts)
+                            .onChange(of: translateLayouts) { value in input.translateLayouts = value }
+                        Text("Set this on the keyboard Mac. Each key types the character it shows on this Mac’s layout, even if the other Mac uses a different layout, and shortcuts such as ⌘Z follow the character. Turn it off to send physical key positions instead.").font(.caption).foregroundStyle(.secondary)
                         HStack {
                             Button(input.sharingRequested ? "Disable sharing" : "Enable sharing") {
                                 if input.sharingRequested { input.disable() } else { input.enable() }
@@ -232,7 +247,7 @@ struct SetupView: View {
                             Button("Request missing permissions") { input.requestPermissions() }
                         }
                         Text(input.status).textSelection(.enabled)
-                        Text("Enable sharing on both Macs. Allow Accessibility and Input Monitoring when prompted. Physical key positions follow the receiving Mac’s keyboard layout. Secure password fields and locked/login screens are unsupported.").font(.caption).foregroundStyle(.secondary)
+                        Text("Enable sharing on both Macs. Allow Accessibility and Input Monitoring when prompted. You can type into password fields on the receiving Mac. While a password field (or Terminal’s Secure Keyboard Entry) is active on the keyboard Mac, macOS hides its keystrokes, so control stays local. The login window, a locked screen and FileVault startup need that Mac’s own keyboard.").font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
                 if !notice.isEmpty { Text(notice).font(.callout).textSelection(.enabled) }
@@ -279,6 +294,8 @@ struct SetupView: View {
             do { try savedShortcut.validate(); input.switchShortcut = savedShortcut }
             catch { applyShortcut(.defaultShortcut, name: "F8") }
             session.autoReconnectEnabled = autoReconnect
+            input.edgeSide = ScreenSide(rawValue: edgeSide)
+            input.translateLayouts = translateLayouts
             input.restoreSharingPreference()
             attemptAutomaticConnection()
             // Show in the Dock and app switcher only while the window is open.

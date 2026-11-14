@@ -4,7 +4,7 @@ What has been tested, how, and what still has not. Hardware results come from th
 
 ## Automated checks
 
-`./scripts/check.sh` runs 11 check groups in a standalone executable (no XCTest required):
+`./scripts/check.sh` runs 14 check groups in a standalone executable (no XCTest required):
 
 - IPv4 validation and pairing-key format and decoding.
 - Message framing with the transport’s real decoder: fragmented and coalesced frames, malformed JSON, oversized frames, version mismatch, replayed or out-of-order sequence numbers.
@@ -12,6 +12,9 @@ What has been tested, how, and what still has not. Hardware results come from th
 - Input packets: physical keycodes, payload validation, held key/modifier/button release on disconnect.
 - Motion coalescing: moves, same-button drags and mid-gesture scrolls merge; keys, clicks and scroll begin/end never do; merged deltas stay within protocol limits.
 - Switching shortcuts: defaults, custom combinations, rejection of plain typing keys and the reserved emergency shortcut.
+- Screen edges: outer-edge detection with three displays (shared edges never cross), edge positions, entry points, push threshold and reset.
+- Keyboard layouts: swapped letters (QWERTY/QWERTZ), symbols on different keys and modifiers, keypad preference, unmappable characters.
+- New message fields (edge, position, key text, reason): round trip, validation, and decoding of 0.3.x messages without them.
 - Keyboard-source negotiation: choice from either Mac, simultaneous conflicting choices, stale acknowledgements, cancellation, restoring and rejecting saved choices.
 
 ## Two-process tests on one Mac
@@ -22,6 +25,10 @@ These run two copies of the app’s headless probe against one Mac’s own Ether
 - `test-role-pair.py`: both peers show the source prompt and confirm opposite roles, whichever side answers, including both at once.
 - `test-ui-stall.py`: TLS and heartbeats survive eight seconds of a blocked UI thread.
 - A second listener on a port already in use reports it once and stops instead of retrying forever.
+
+## Real keyboard layouts
+
+`EtherLink --layout-check` reads macOS’s actual layouts: every printable character on the current layout (267 on a US layout) resolves back to a key that types it, and all 98 main-keyboard characters of a US layout type the same character through the German QWERTZ layout (for example z on key 16, @ as Option-L).
 
 ## Confirmed on the two-Mac desk
 
@@ -35,6 +42,7 @@ These run two copies of the app’s headless probe against one Mac’s own Ether
 
 - Behaviour under sustained fast input (drag and scroll coalescing under real load), and latency.
 - The parked pointer, menu bar controls and window-close behaviour introduced in v0.3.3.
+- v0.4.0 screen-edge crossing in both directions, layout matching between two Macs, typing into a password field on the receiving Mac, and the locked-screen and secure-input messages.
 - Sleep and wake, adapter removal and address changes during active control.
 - Display reconfiguration while forwarding.
 - Intel Macs and macOS versions before 27.

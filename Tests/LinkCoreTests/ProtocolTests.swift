@@ -143,7 +143,10 @@ struct CoreChecks {
         try check(SwitchShortcut.emergency.matches(keyCode: 53, modifiers: 3), "emergency return stays fixed independently of custom switching")
         print("PASS configurable shortcut matching, defaults and emergency reservation")
         try mergeChecks()
+        try edgeChecks()
+        try layoutChecks()
+        try wireFieldChecks()
         try roleChecks()
-        print("All 11 check groups passed")
+        print("All 14 check groups passed")
     }
 }

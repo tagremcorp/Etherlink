@@ -51,6 +51,20 @@ final class InputController: ObservableObject {
     /// Where the local pointer waits while the other Mac is controlled.
     private var parkedCursor = CGPoint.zero
     private var permissionTimer: Timer?
+    /// Keyboard Mac: the side of this Mac's desktop where the other Mac's screen sits (nil = off).
+    var edgeSide: ScreenSide?
+    /// Keyboard Mac: send each key's character so the other Mac can match it on its own layout.
+    var translateLayouts = true
+    private lazy var layout = KeyboardLayout()
+    private var edgePush = EdgePush()
+    private var lastSwitch: TimeInterval = 0
+    /// Keyboard Mac: the display the pointer left from, so an edge return lands back there.
+    private var crossDisplay: CGRect?
+    /// Receiving Mac: its side facing the keyboard Mac (entry and return edge) for this control session.
+    private var receiverEdge: ScreenSide?
+    /// Receiving Mac: how each held source key was typed here, so its key-up matches its key-down.
+    private var translatedKeys: [UInt16: (code: UInt16, shift: Bool?, option: Bool?, text: String?)] = [:]
+    private var secureNotice = false
     private let marker: Int64 = 0x454C494E4B
     var send: ((WireMessage) -> Void)?
 
@@ -112,10 +126,16 @@ final class InputController: ObservableObject {
             setStatus("Waiting for \(missing). Enable EtherLink in Privacy & Security. Sharing will start automatically when macOS reports access. If both toggles are already on, their entries may belong to an older build: remove EtherLink from both lists with the minus button, add /Applications/EtherLink.app with the plus button, then reopen it.")
             return
         }
-        if secureInputActive {
-            if enabled { removeTap() }
-            setStatus("Sharing paused while macOS secure input is active. Leave the protected password field; sharing will resume with control local.")
-            return
+        // Secure input only matters on the keyboard Mac: macOS then hides its keystrokes from the
+        // event tap, so they would go to the local app instead of the other Mac. The receiving Mac
+        // can still type into its own password fields, because posted events are not blocked.
+        if secureInputActive && keyboardMac {
+            if remote || pending { returnLocal() }
+            secureNotice = true
+            setStatus("Secure input is on in \(SystemState.secureInputOwner() ?? "another app") on this Mac, so macOS hides its keystrokes. Control stays here until it ends: leave the password field, or turn off Secure Keyboard Entry in Terminal’s menu.")
+        } else if secureNotice {
+            secureNotice = false
+            setStatus("Secure input ended. Ready to switch control.")
         }
         guard tap == nil else { return }
         let types: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .mouseMoved, .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel]
@@ -217,42 +237,67 @@ final class InputController: ObservableObject {
         }
         switch message.kind {
         case .takeControl:
-            guard roleConfirmed, !keyboardMac, enabled, AXIsProcessTrusted(), !IsSecureEventInputEnabled() else {
-                send?(.init(.denied)); return
+            guard roleConfirmed, !keyboardMac, enabled, AXIsProcessTrusted() else {
+                var denied = WireMessage(.denied)
+                denied.reason = "\(localName) is not ready. Click Enable sharing there and grant Accessibility and Input Monitoring."
+                send?(denied); return
             }
             releaseInjected(); receiving = true
+            translatedKeys.removeAll(); edgePush.reset(); lastSwitch = ProcessInfo.processInfo.systemUptime
+            receiverEdge = message.edge.flatMap(ScreenSide.init(rawValue:))?.opposite
+            if let side = receiverEdge, let position = message.position,
+               let display = EdgeGeometry.extremeDisplay(side: side, displays: displayBounds) {
+                moveInjectedPointer(to: EdgeGeometry.point(on: display, side: side, position: position))
+            }
             status = "Receiving keyboard and mouse. Control–Option–Escape returns control to the Keyboard Mac."
-            send?(.init(.granted))
+            var granted = WireMessage(.granted)
+            if SystemState.screenLocked {
+                granted.reason = "\(localName) is locked. macOS may ignore forwarded typing at the lock screen; unlock it with its own keyboard, Touch ID or Apple Watch."
+            }
+            send?(granted)
         case .granted:
             guard roleConfirmed, keyboardMac, pending, enabled else { send?(.init(.releaseControl)); return }
-            pending = false; remote = true
+            pending = false; remote = true; lastSwitch = ProcessInfo.processInfo.systemUptime
             savedCursor = CGEvent(source: nil)?.location ?? .zero
             releaseLocalModifiers()
             parkCursor()
-            status = "Controlling the Other Mac. Control–Option–Escape always returns here."
+            status = message.reason ?? "Controlling \(peerName). Control–Option–Escape always returns here."
         case .denied:
             pending = false
-            status = "Other Mac is not ready. Click Enable sharing there and grant Accessibility and Input Monitoring."
+            status = message.reason ?? "Other Mac is not ready. Click Enable sharing there and grant Accessibility and Input Monitoring."
         case .releaseControl:
             guard !keyboardMac else { return }
             releaseInjected(); receiving = false; status = "Ready to receive input."
         case .returnControl:
-            if keyboardMac { returnLocal() }
+            guard keyboardMac else { return }
+            // An edge return puts the pointer back on the edge it crossed, at the matching position.
+            if remote, let position = message.position, let side = edgeSide,
+               let display = crossDisplay ?? EdgeGeometry.extremeDisplay(side: side, displays: displayBounds) {
+                savedCursor = EdgeGeometry.point(on: display, side: side, position: position)
+            }
+            returnLocal()
         case .input:
             guard roleConfirmed, !keyboardMac, receiving, enabled, let input = message.input else { return }
             try inject(input)
         default: break
         }
     }
-    func toggle() {
+    func toggle(edgePosition: Double? = nil) {
         if remote || pending { returnLocal(); return }
         guard roleConfirmed, keyboardMac, paired, enabled else {
             status = "Pair both Macs, choose the keyboard source on either screen, and enable sharing on both before switching."; return
         }
-        guard !IsSecureEventInputEnabled() else { status = "Secure input is active. Switch to an ordinary app before sharing."; return }
+        guard !IsSecureEventInputEnabled() else {
+            status = "Secure input is on in \(SystemState.secureInputOwner() ?? "another app") on this Mac, so macOS hides its keystrokes. Leave the password field, or turn off Secure Keyboard Entry in Terminal’s menu, then switch."
+            return
+        }
+        if edgePosition == nil { crossDisplay = nil }
         let request = UUID(); controlRequest = request
-        pending = true; status = "Requesting control of the Other Mac…"
-        send?(.init(.takeControl))
+        pending = true; status = "Requesting control of \(peerName)…"
+        var take = WireMessage(.takeControl)
+        take.edge = edgeSide?.rawValue   // also lets the other Mac return control through its edge
+        take.position = edgePosition
+        send?(take)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             // Only the request that armed this timer may time out; a later request has its own.
             guard let self, self.pending, self.controlRequest == request else { return }
@@ -260,10 +305,14 @@ final class InputController: ObservableObject {
             self.status = "The Other Mac did not accept control. Check Enable sharing and permissions there."
         }
     }
-    func returnLocal() {
-        pending = false
+    func returnLocal(edgePosition: Double? = nil) {
+        pending = false; edgePush.reset(); lastSwitch = ProcessInfo.processInfo.systemUptime
         if keyboardMac { if paired { send?(.init(.releaseControl)) }; restoreCursor() }
-        else { releaseInjected(); receiving = false; if paired { send?(.init(.returnControl)) } }
+        else {
+            releaseInjected(); receiving = false; receiverEdge = nil
+            var message = WireMessage(.returnControl); message.position = edgePosition
+            if paired { send?(message) }
+        }
         if enabled { status = keyboardMac ? "Keyboard and mouse control this Mac." : "Ready to receive input." }
     }
     /// Moves the local pointer to the bottom-right corner of its display and holds it there.
@@ -314,6 +363,7 @@ final class InputController: ObservableObject {
             suppressedKeys.insert(key); return nil
         }
         if type == .keyUp, suppressedKeys.remove(key) != nil { return nil }
+        if type == .mouseMoved, keyboardMac, !remote, !pending { checkEdgeCrossing(event) }
         guard keyboardMac, remote else { return Unmanaged.passUnretained(event) }
         var p = InputPacket(kind: .move)
         p.key = key; p.flags = event.flags.rawValue
@@ -341,8 +391,34 @@ final class InputController: ObservableObject {
             p.dx = event.getDoubleValueField(.mouseEventDeltaX); p.dy = event.getDoubleValueField(.mouseEventDeltaY)
         }
         if p.kind != .keyDown && p.kind != .keyUp && p.kind != .flags { p.key = 0 }
+        if translateLayouts, p.kind == .keyDown || p.kind == .keyUp,
+           let text = layout.text(for: key, shift: flags.contains(.maskShift), option: flags.contains(.maskAlternate),
+                                  capsLock: flags.contains(.maskAlphaShift)),
+           KeyLayoutMap.isPrintable(text) {
+            p.text = text
+        }
         if p.isValid { send?(.init(.input, input: p)) }
         return nil
+    }
+    /// Keyboard Mac: a deliberate push against the configured outer edge switches control.
+    /// Only plain movement counts; a drag in progress never crosses.
+    private func checkEdgeCrossing(_ event: CGEvent) {
+        guard let side = edgeSide, roleConfirmed, paired, enabled else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastSwitch > 0.5,
+              let display = EdgeGeometry.outerEdgeDisplay(at: event.location, side: side, displays: displayBounds) else {
+            edgePush.reset(); return
+        }
+        let pressure = side.pressure(dx: event.getDoubleValueField(.mouseEventDeltaX), dy: event.getDoubleValueField(.mouseEventDeltaY))
+        guard edgePush.push(pressure, now: now) else { return }
+        crossDisplay = display
+        toggle(edgePosition: EdgeGeometry.position(of: event.location, on: display, side: side))
+    }
+    /// Receiving Mac: moves its pointer, with a move event so apps update hover state.
+    private func moveInjectedPointer(to point: CGPoint) {
+        CGWarpMouseCursorPosition(point)
+        let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)
+        post(event)
     }
     private func post(_ event: CGEvent?) {
         guard let event else { return }
@@ -362,8 +438,19 @@ final class InputController: ObservableObject {
         var event: CGEvent?
         switch p.kind {
         case .keyDown, .keyUp:
-            event = CGEvent(keyboardEventSource: nil, virtualKey: p.key, keyDown: p.kind == .keyDown)
+            let typed = translatedKey(p)
+            event = CGEvent(keyboardEventSource: nil, virtualKey: typed.code, keyDown: p.kind == .keyDown)
             event?.setIntegerValueField(.keyboardEventAutorepeat, value: p.autorepeat ? 1 : 0)
+            var flags = CGEventFlags(rawValue: p.flags)
+            if let shift = typed.shift { if shift { flags.insert(.maskShift) } else { flags.remove(.maskShift) } }
+            if let option = typed.option { if option { flags.insert(.maskAlternate) } else { flags.remove(.maskAlternate) } }
+            event?.flags = flags
+            if let text = typed.text {
+                let units = Array(text.utf16)
+                event?.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+            }
+            post(event)
+            return
         case .flags:
             event = CGEvent(keyboardEventSource: nil, virtualKey: p.key, keyDown: false)
             event?.type = .flagsChanged
@@ -373,6 +460,12 @@ final class InputController: ObservableObject {
             event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: target, mouseButton: CGMouseButton(rawValue: UInt32(p.button)) ?? .center)
             event?.setDoubleValueField(.mouseEventDeltaX, value: target.x - location.x)
             event?.setDoubleValueField(.mouseEventDeltaY, value: target.y - location.y)
+            if p.kind == .move, checkEdgeReturn(target: target, packet: p) {
+                event?.setIntegerValueField(.mouseEventButtonNumber, value: Int64(p.button))
+                event?.flags = CGEventFlags(rawValue: p.flags)
+                post(event)
+                return
+            }
         case .buttonDown, .buttonUp:
             let down = p.kind == .buttonDown
             let type: CGEventType = p.button == 0 ? (down ? .leftMouseDown : .leftMouseUp) : (p.button == 1 ? (down ? .rightMouseDown : .rightMouseUp) : (down ? .otherMouseDown : .otherMouseUp))
@@ -392,6 +485,41 @@ final class InputController: ObservableObject {
         }
         event?.flags = CGEventFlags(rawValue: p.flags)
         post(event)
+    }
+    /// Receiving Mac: how to type a forwarded key here. With the source's character available, the
+    /// key that types that character on this Mac's layout is used (keeping Command/Control, so
+    /// shortcuts follow the character too). A character this layout cannot type at all is posted as
+    /// text on the original key, unless Command or Control is held. Key-ups reuse the key-down choice.
+    private func translatedKey(_ p: InputPacket) -> (code: UInt16, shift: Bool?, option: Bool?, text: String?) {
+        if p.kind == .keyUp, let previous = translatedKeys.removeValue(forKey: p.key) { return previous }
+        guard p.kind == .keyDown, let text = p.text else { return (p.key, nil, nil, nil) }
+        let flags = CGEventFlags(rawValue: p.flags)
+        let result: (code: UInt16, shift: Bool?, option: Bool?, text: String?)
+        if let chord = layout.map.resolve(text, original: p.key, shift: flags.contains(.maskShift), option: flags.contains(.maskAlternate)) {
+            result = (chord.keyCode, chord.shift, chord.option, nil)
+        } else if !flags.contains(.maskCommand) && !flags.contains(.maskControl) {
+            result = (p.key, nil, nil, text)
+        } else {
+            result = (p.key, nil, nil, nil)
+        }
+        translatedKeys[p.key] = result
+        return result
+    }
+    /// Receiving Mac: a deliberate push against the edge facing the keyboard Mac returns control.
+    /// Returns true when control was handed back.
+    private func checkEdgeReturn(target: CGPoint, packet p: InputPacket) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard receiving, let side = receiverEdge, now - lastSwitch > 0.5,
+              let display = EdgeGeometry.outerEdgeDisplay(at: target, side: side, displays: displayBounds) else {
+            edgePush.reset(); return false
+        }
+        guard edgePush.push(side.pressure(dx: p.dx, dy: p.dy), now: now) else { return false }
+        let position = EdgeGeometry.position(of: target, on: display, side: side)
+        DispatchQueue.main.async { [weak self] in
+            self?.returnLocal(edgePosition: position)
+            self?.status = "Control returned to the Keyboard Mac through the screen edge."
+        }
+        return true
     }
     private func releaseInjected() {
         for release in pressed.drain() { try? inject(release) }

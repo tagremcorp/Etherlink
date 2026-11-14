@@ -13,11 +13,15 @@ public struct InputPacket: Codable {
     public var autorepeat: Bool = false
     public var phase: Int64 = 0
     public var momentum: Int64 = 0
+    /// For key events: the character the key typed on the keyboard Mac's layout (Shift, Option and
+    /// Caps Lock applied; Command and Control not), so the receiver can match it on its own layout.
+    public var text: String?
     public init(kind: Kind) { self.kind = kind }
     public var isValid: Bool {
         key <= 255 && (0...31).contains(button) && (0...4).contains(clicks)
         && dx.isFinite && dy.isFinite && abs(dx) <= 100_000 && abs(dy) <= 100_000
         && (0...255).contains(phase) && (0...255).contains(momentum)
+        && (text == nil || ((kind == .keyDown || kind == .keyUp) && KeyLayoutMap.isPrintable(text!)))
     }
 }
 
@@ -33,6 +37,12 @@ public struct WireMessage: Codable {
     public var assignmentID: String?
     public var sourceDeviceID: String?
     public var input: InputPacket?
+    /// takeControl: the side of the keyboard Mac the other Mac is on (ScreenSide raw value).
+    public var edge: String?
+    /// takeControl/returnControl: where along that edge the pointer crossed, 0...1.
+    public var position: Double?
+    /// granted/denied: a short explanation for the keyboard Mac's status line.
+    public var reason: String?
     public init(_ kind: Kind, input: InputPacket? = nil) {
         self.kind = kind; self.input = input
     }
@@ -56,7 +66,10 @@ public struct WireDecoder {
             guard message.sequence > lastSequence else { throw LinkError.invalid("Out-of-order message.") }
             guard message.input?.isValid != false,
                   (message.kind == .input) == (message.input != nil),
-                  message.kind != .hello || (message.deviceID != nil && message.deviceName != nil) else { throw LinkError.invalid("Invalid input message.") }
+                  message.kind != .hello || (message.deviceID != nil && message.deviceName != nil),
+                  message.edge.map({ ScreenSide(rawValue: $0) != nil }) ?? true,
+                  message.position.map({ $0.isFinite && (0...1).contains($0) }) ?? true,
+                  (message.reason?.count ?? 0) <= 240 else { throw LinkError.invalid("Invalid input message.") }
             lastSequence = message.sequence; result.append(message)
         }
         return result
