@@ -94,6 +94,8 @@ struct SetupView: View {
     @AppStorage("shortcutKeyName") private var shortcutKeyName = ""
     @AppStorage("autoReconnect") private var autoReconnect = true
     @AppStorage("edgeSide") private var edgeSide = ""
+    @AppStorage("edgeDisplay") private var edgeDisplay = ""
+    @AppStorage("edgePush") private var edgePush = EdgePushLevel.medium.rawValue
     @AppStorage("translateLayouts") private var translateLayouts = true
     @AppStorage("adapter") private var adapterID = ""
     @AppStorage("peer") private var peer = ""
@@ -228,7 +230,28 @@ struct SetupView: View {
                             Text("Below").tag(ScreenSide.bottom.rawValue)
                         }.frame(maxWidth: 360).accessibilityIdentifier("edgeSide")
                             .onChange(of: edgeSide) { value in input.edgeSide = ScreenSide(rawValue: value) }
-                        Text("Set this on the keyboard Mac. Push the pointer firmly against that outer screen edge to move to the other Mac, and against the facing edge there to come back. Edges shared with another display on the same Mac never switch, so arrange displays in System Settings → Displays so the edge facing the other Mac is an outer edge. For two PBP halves side by side, choose “To the right” on the Mac shown on the left.").font(.caption).foregroundStyle(.secondary)
+                        Text("Set this on the keyboard Mac. Push the pointer against that screen edge and keep pushing to move to the other Mac, and against the facing edge there to come back. The corners of the edge never switch. An edge with another of this Mac’s displays beyond it never switches either.").font(.caption).foregroundStyle(.secondary)
+                        if input.displays.count > 1 || !edgeDisplay.isEmpty {
+                            Picker("Display next to the other Mac", selection: $edgeDisplay) {
+                                Text("Automatic").tag("")
+                                ForEach(input.displays) { display in Text(display.name).tag(display.choice.stored) }
+                                if !edgeDisplay.isEmpty, !input.displays.contains(where: { $0.choice.stored == edgeDisplay }) {
+                                    Text("Chosen display (not connected)").tag(edgeDisplay)
+                                }
+                            }.frame(maxWidth: 360).accessibilityIdentifier("edgeDisplay")
+                                .onChange(of: edgeDisplay) { value in input.edgeDisplayChoice = DisplayChoice(stored: value) }
+                            Text("Only this display’s edge switches control. Set it on each Mac that has more than one display.").font(.caption).foregroundStyle(.secondary)
+                            if !input.edgeDisplayNote.isEmpty {
+                                Text(input.edgeDisplayNote).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("edgeDisplayNote")
+                            }
+                        }
+                        Picker("Push needed to switch", selection: $edgePush) {
+                            Text("Light").tag(EdgePushLevel.light.rawValue)
+                            Text("Medium").tag(EdgePushLevel.medium.rawValue)
+                            Text("Firm").tag(EdgePushLevel.firm.rawValue)
+                        }.frame(maxWidth: 360).accessibilityIdentifier("edgePush")
+                            .onChange(of: edgePush) { value in input.pushLevel = EdgePushLevel(rawValue: value) ?? .medium }
+                        Text("Set this on the keyboard Mac; it applies in both directions. Top and bottom edges always need a longer push than the sides, because the menu bar and Dock are there.").font(.caption).foregroundStyle(.secondary)
                         Toggle("Match typed characters across keyboard layouts", isOn: $translateLayouts)
                             .onChange(of: translateLayouts) { value in input.translateLayouts = value }
                         Text("Set this on the keyboard Mac. Each key types the character it shows on this Mac’s layout, even if the other Mac uses a different layout, and shortcuts such as ⌘Z follow the character. Turn it off to send physical key positions instead.").font(.caption).foregroundStyle(.secondary)
@@ -295,6 +318,8 @@ struct SetupView: View {
             catch { applyShortcut(.defaultShortcut, name: "F8") }
             session.autoReconnectEnabled = autoReconnect
             input.edgeSide = ScreenSide(rawValue: edgeSide)
+            input.edgeDisplayChoice = DisplayChoice(stored: edgeDisplay)
+            input.pushLevel = EdgePushLevel(rawValue: edgePush) ?? .medium
             input.translateLayouts = translateLayouts
             input.restoreSharingPreference()
             attemptAutomaticConnection()

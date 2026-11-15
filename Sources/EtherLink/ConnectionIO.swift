@@ -139,7 +139,8 @@ final class ConnectionIO {
                     if !messages.isEmpty {
                         self.health.received(now: ProcessInfo.processInfo.systemUptime)
                         self.received += UInt64(messages.filter { $0.kind == .heartbeat }.count)
-                        self.onMessages?(messages.filter { $0.kind != .heartbeat }, self.received)
+                        // A heartbeat carrying a display list is also an update for the input controller.
+                        self.onMessages?(messages.filter { $0.kind != .heartbeat || $0.displays != nil }, self.received)
                     }
                 }
                 if complete || error != nil { self.fail("Peer disconnected\(error.map { ": \($0)" } ?? "")"); return }

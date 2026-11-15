@@ -6,7 +6,7 @@
 
 EtherLink is a native macOS app that forwards keyboard and mouse input from one Mac to another over a cable you choose. Both Macs keep their own Wi-Fi and internet access. EtherLink never falls back to Wi-Fi, never changes routes or network settings, and only talks to the other Mac through the Ethernet adapter and address you select.
 
-> **Status: working prototype (v0.4.0).** Shortcut and screen-edge switching, keyboard, mouse, dragging and scrolling work between two Macs. See [Limitations](#limitations).
+> **Status: working prototype (v0.4.1).** Shortcut and screen-edge switching, keyboard, mouse, dragging and scrolling work between two Macs. See [Limitations](#limitations).
 
 ## Why it exists
 
@@ -22,7 +22,7 @@ The monitor is the reference setup, not a requirement. EtherLink works with any 
 - **Encrypted pairing.** TLS 1.2 with a 256-bit pre-shared pairing key (AES-128-GCM), generated on one Mac and entered on the other. Keys can be saved in the Keychain.
 - **Automatic reconnection** every five seconds over the selected adapter, after cable unplug, sleep or app restart.
 - **One coordinated keyboard source.** On first connection both Macs ask which one has the keyboard and mouse; answer on either screen and the pair agrees on exactly one source.
-- **Screen-edge switching.** Push the pointer against the edge facing the other Mac to move there, at the matching height, and push against the facing edge on the other Mac to come back. Edges shared with another display never switch, so multi-monitor desks only cross at their true outer edge.
+- **Screen-edge switching.** Push the pointer against the edge facing the other Mac to move there, at the matching height, and push against the facing edge on the other Mac to come back. On a Mac with several displays, only the edge of the display next to the other Mac switches: EtherLink picks the monitor both Macs are plugged into when it can, or you choose it. A brief brush, a pointer thrown at the menu bar or Dock, and the corners of the edge never switch.
 - **Shortcut switching.** Control–Option–F8 by default (or record your own). **Control–Option–Escape** always returns control to the keyboard Mac.
 - **Keyboard layouts just work.** Each key types the character it shows on the keyboard Mac, even if the other Mac uses a different layout (for example US and German), and shortcuts like ⌘Z follow the character.
 - **Full input forwarding:** keys, modifiers, mouse movement, all buttons, dragging and two-axis scrolling, including trackpad momentum. You can type into password fields on the receiving Mac.
@@ -51,8 +51,8 @@ Install the same version on both Macs.
 4. Click **Start listening**, then **Connect over Ethernet**. Choose **Allow** if macOS asks for Local Network access.
 5. When asked **“Which Mac receives the keyboard and mouse?”**, answer on either Mac. If your keyboard and mouse are plugged into the monitor, pick the Mac currently receiving the monitor’s USB input.
 6. Click **Enable sharing** on both Macs and grant **Accessibility** and **Input Monitoring** in System Settings → Privacy & Security. Reopen EtherLink if macOS asks.
-7. On the keyboard Mac, set **Other Mac’s screen is** to the side where the other Mac’s screen sits. For two PBP halves side by side, choose **To the right** on the Mac shown on the left half. Make sure that edge is an outer edge in System Settings → Displays (no other display arranged beyond it).
-8. Push the pointer against that edge to control the other Mac, and against the facing edge there to come back. You can also press **Control–Option–F8**, and **Control–Option–Escape** always returns control to the keyboard Mac. Some keyboards also need **Fn** for function keys.
+7. On the keyboard Mac, set **Other Mac’s screen is** to the side where the other Mac’s screen sits. For two PBP halves side by side, choose **To the right** on the Mac shown on the left half. If that Mac has more than one display, check **Display next to the other Mac**: **Automatic** finds the monitor both Macs are plugged into, and otherwise you pick the display whose edge should switch. That edge must be an outer edge in System Settings → Displays (no other display arranged beyond it). **Push needed to switch** sets how firm the push is.
+8. Push the pointer against that edge, and keep pushing for a moment, to control the other Mac, and against the facing edge there to come back. You can also press **Control–Option–F8**, and **Control–Option–Escape** always returns control to the keyboard Mac. Some keyboards also need **Fn** for function keys.
 
 ## Troubleshooting permissions
 
@@ -69,7 +69,7 @@ If a Keychain prompt appears after an update, choose **Always Allow** so EtherLi
 
 ## Limitations
 
-- **Screen edges:** one side is configured per pair, and the pointer enters the other Mac on its outermost display on the facing side. Crossing is blocked while a mouse button is held, so drags do not carry between Macs.
+- **Screen edges:** one side and one display per Mac are configured per pair. Automatic display detection relies on both Macs reporting the same monitor identity, which a monitor may not do on every input; choose the display by hand if it does not. Top and bottom edges need a longer push than the sides. Crossing is blocked while a mouse button is held, so drags do not carry between Macs.
 - **Keyboard layouts:** dead-key accents (such as Option-E then E on a US layout) are sent as the accent character and may not combine on the other Mac. Characters the other layout cannot type are sent as text, except with ⌘ or Control held.
 - **Password fields on the keyboard Mac:** while one is focused (or Terminal’s *Secure Keyboard Entry* is on), macOS hides keystrokes from all apps, so control stays local until it ends. EtherLink tells you which app holds secure input. Typing into password fields on the receiving Mac works.
 - **Login window, lock screen and FileVault:** not supported. macOS ignores synthetic input from apps there, and FileVault unlocks before any app runs, so use that Mac’s own keyboard, Touch ID or Apple Watch. EtherLink tells you when the other Mac is locked.
@@ -82,7 +82,7 @@ If a Keychain prompt appears after an update, choose **Always Allow** so EtherLi
 Requires Xcode (the scripts use `/Applications/Xcode.app` without changing `xcode-select`; set `ETHERLINK_DEVELOPER_DIR` to override).
 
 ```sh
-./scripts/check.sh                                   # protocol and state checks (14 groups)
+./scripts/check.sh                                   # protocol and state checks (15 groups)
 .build/debug/EtherLink --layout-check                # real keyboard layouts on this Mac, plus German QWERTZ
 ./scripts/check.sh en0 192.168.50.1                  # plus two-process TLS tests on one Mac's Ethernet address
 python3 scripts/test-role-pair.py en0 192.168.50.1   # keyboard-source negotiation over TLS

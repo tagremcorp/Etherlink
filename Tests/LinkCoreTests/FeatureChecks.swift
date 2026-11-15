@@ -32,7 +32,53 @@ extension CoreChecks {
         try check(!push.push(30, now: 2.0) && !push.push(30, now: 2.5), "pressure spread out over time does not add up")
         _ = push.push(30, now: 3.0)
         try check(!push.push(-1, now: 3.1) && !push.push(30, now: 3.2), "moving away resets the push")
-        print("PASS screen-edge geometry, outer edges with multiple displays, positions and push threshold")
+        // Slow pressure never adds up: only the last `window` seconds count.
+        var slow = EdgePush(threshold: 40, window: 0.35)
+        var slowFired = false
+        for step in 0..<40 { if slow.push(3, now: 10 + Double(step) * 0.1) { slowFired = true } }
+        try check(!slowFired, "slow drift along an edge never switches")
+        // A dwell ignores the burst of a pointer thrown at the edge (menu bar, Dock).
+        var dwell = EdgePush(threshold: 100, window: 0.35, dwell: 0.2)
+        try check(!dwell.push(300, now: 20.00) && !dwell.push(200, now: 20.05) && !dwell.push(0, now: 20.4), "a pointer thrown at the edge does not switch")
+        var held = EdgePush(threshold: 100, window: 0.35, dwell: 0.2)
+        var heldFired = false
+        for step in 0..<12 { if held.push(30, now: 30 + Double(step) * 0.05) { heldFired = true; break } }
+        try check(heldFired, "a sustained push switches after the dwell")
+        var paused = EdgePush(threshold: 100, window: 0.35, dwell: 0.2)
+        _ = paused.push(30, now: 40.0); _ = paused.push(30, now: 40.1)
+        try check(!paused.push(90, now: 40.5), "a pause restarts the dwell")
+        for level in EdgePushLevel.allCases {
+            let side = level.push(for: .left), vertical = level.push(for: .bottom)
+            try check(vertical.threshold > side.threshold && vertical.dwell > side.dwell, "top and bottom edges need a firmer push (\(level.rawValue))")
+        }
+        try check(EdgePushLevel.firm.push(for: .right).threshold > EdgePushLevel.light.push(for: .right).threshold, "firm is firmer than light")
+        try check(EdgeGeometry.inCorner(0) && EdgeGeometry.inCorner(0.03) && EdgeGeometry.inCorner(0.99) && !EdgeGeometry.inCorner(0.05) && !EdgeGeometry.inCorner(0.5), "the ends of an edge are corners")
+        print("PASS screen-edge geometry, outer edges with multiple displays, positions, corners and push")
+    }
+
+    static func sharedDisplayChecks() throws {
+        let lg = DisplayIdentity(vendor: 7789, model: 23540, serial: 111)
+        let dellA = DisplayIdentity(vendor: 4268, model: 100, serial: 0)
+        let dellB = DisplayIdentity(vendor: 4268, model: 100, serial: 0)
+        let three = [("A", dellA), ("B", lg), ("C", dellB)]
+        func resolve(_ choice: DisplayChoice?, _ local: [(String, DisplayIdentity)], _ peer: [DisplayIdentity]) -> (SharedDisplay.Resolution, SharedDisplay.Source) {
+            let r = SharedDisplay.resolve(choice: choice, local: local.map { (key: $0.0, identity: $0.1) }, peer: peer); return (r.resolution, r.source)
+        }
+        try check(resolve(nil, three, [lg]) == (.display(1), .matchedPeer), "the monitor both Macs are plugged into is found automatically")
+        try check(resolve(nil, three, [DisplayIdentity(vendor: 7789, model: 23540, serial: 0)]) == (.display(1), .matchedPeer), "an unknown serial still matches on vendor and model")
+        try check(resolve(nil, three, [DisplayIdentity(vendor: 7789, model: 23540, serial: 222)]) == (.any, .undetected), "a different serial is a different monitor")
+        try check(resolve(nil, three, [dellA]) == (.any, .undetected), "two identical candidates are not guessed between")
+        try check(resolve(nil, three, []) == (.any, .undetected), "an older peer that reports no displays keeps 0.4.0 behaviour")
+        try check(resolve(nil, [("A", lg)], []) == (.display(0), .onlyDisplay), "a single display needs no choice")
+        try check(!DisplayIdentity(vendor: 0, model: 0, serial: 0).matches(DisplayIdentity(vendor: 0, model: 0, serial: 0)), "displays with no identity never match")
+        let chosen = DisplayChoice(key: "C", identity: dellB)
+        try check(resolve(chosen, three, [lg]) == (.display(2), .chosen), "a chosen display overrides detection")
+        try check(resolve(DisplayChoice(key: "old", identity: lg), three, []) == (.display(1), .chosen), "a chosen display is found again after its system ID changes")
+        try check(resolve(DisplayChoice(key: "old", identity: dellA), three, []) == (.unavailable, .missing), "identical monitors are not guessed between when the ID is gone")
+        try check(resolve(DisplayChoice(key: "gone", identity: lg), [("A", dellA), ("C", dellB)], [lg]) == (.unavailable, .missing), "a disconnected chosen display pauses edge switching")
+        try check(resolve(DisplayChoice(key: "gone", identity: lg), [("A", dellA)], []) == (.display(0), .onlyDisplay), "with one display left it is used")
+        try check(DisplayChoice(stored: chosen.stored) == chosen && DisplayChoice(stored: "") == nil && DisplayChoice(stored: "x|1|2") == nil && DisplayChoice(stored: "x|a|2|3") == nil, "saved display choice round trip and rejection")
+        print("PASS shared display: automatic detection, manual choice, missing and identical monitors")
     }
 
     static func layoutChecks() throws {
@@ -89,6 +135,16 @@ extension CoreChecks {
         try rejects("control character as key text") { _ = try roundTrip(.init(.input, input: controlText)) }
         var longReason = WireMessage(.granted); longReason.reason = String(repeating: "x", count: 241)
         try rejects("oversized reason") { _ = try roundTrip(longReason) }
+        var shown = WireMessage(.heartbeat); shown.displays = [DisplayIdentity(vendor: 7789, model: 23540, serial: 5)]
+        let shownBack = try roundTrip(shown).first?.displays
+        try check(shownBack == [DisplayIdentity(vendor: 7789, model: 23540, serial: 5)], "display list survives the wire")
+        var firm = WireMessage(.takeControl); firm.push = "firm"
+        let firmBack = try roundTrip(firm).first?.push
+        try check(firmBack == "firm", "push level survives the wire")
+        var badPush = WireMessage(.takeControl); badPush.push = "crushing"
+        try rejects("unknown push level") { _ = try roundTrip(badPush) }
+        var tooMany = WireMessage(.heartbeat); tooMany.displays = Array(repeating: DisplayIdentity(vendor: 1, model: 1, serial: 1), count: 9)
+        try rejects("too many displays") { _ = try roundTrip(tooMany) }
         print("PASS edge, key text and reason fields: round trip, 0.3.x compatibility and validation")
     }
 }

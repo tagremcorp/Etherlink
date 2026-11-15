@@ -144,9 +144,10 @@ struct CoreChecks {
         print("PASS configurable shortcut matching, defaults and emergency reservation")
         try mergeChecks()
         try edgeChecks()
+        try sharedDisplayChecks()
         try layoutChecks()
         try wireFieldChecks()
         try roleChecks()
-        print("All 14 check groups passed")
+        print("All 15 check groups passed")
     }
 }

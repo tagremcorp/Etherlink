@@ -12,6 +12,16 @@ private let displayReconfigured: CGDisplayReconfigurationCallBack = { _, flags, 
     else { DispatchQueue.main.async { [weak controller] in controller?.refreshDisplays() } }
 }
 
+/// One of this Mac's monitors, as listed in the shared-display picker.
+struct DisplayInfo: Equatable, Identifiable {
+    let key: String
+    let identity: DisplayIdentity
+    var name: String
+    let bounds: CGRect
+    var id: String { key }
+    var choice: DisplayChoice { DisplayChoice(key: key, identity: identity) }
+}
+
 /// Core Graphics capture/injection stays on the main run loop. No keystrokes are logged.
 final class InputController: ObservableObject {
     var keyboardMac: Bool { roles?.localIsKeyboard == true }
@@ -52,11 +62,23 @@ final class InputController: ObservableObject {
     private var parkedCursor = CGPoint.zero
     private var permissionTimer: Timer?
     /// Keyboard Mac: the side of this Mac's desktop where the other Mac's screen sits (nil = off).
-    var edgeSide: ScreenSide?
+    var edgeSide: ScreenSide? { didSet { edgePush = pushLevel.push(for: edgeSide ?? .right); resolveSharedDisplay() } }
+    /// How firm a push against the edge switches control, on this Mac and for the return.
+    var pushLevel = EdgePushLevel.medium { didSet { edgePush = pushLevel.push(for: edgeSide ?? .right) } }
+    /// The display next to the other Mac's screen, when chosen by hand (nil = detect automatically).
+    var edgeDisplayChoice: DisplayChoice? { didSet { resolveSharedDisplay() } }
+    @Published private(set) var displays: [DisplayInfo] = []
+    /// Explains the automatic choice, or why edge switching is paused. Empty when there is nothing to say.
+    @Published private(set) var edgeDisplayNote = ""
+    private var peerDisplays: [DisplayIdentity] = []
+    private var sharedDisplay = SharedDisplay.Resolution.any
+    private var screenObserver: NSObjectProtocol?
     /// Keyboard Mac: send each key's character so the other Mac can match it on its own layout.
     var translateLayouts = true
     private lazy var layout = KeyboardLayout()
-    private var edgePush = EdgePush()
+    private var edgePush = EdgePushLevel.medium.push(for: .right)
+    /// Receiving Mac: the push that returns control, set up when control arrives.
+    private var returnPush = EdgePushLevel.medium.push(for: .left)
     private var lastSwitch: TimeInterval = 0
     /// Keyboard Mac: the display the pointer left from, so an edge return lands back there.
     private var crossDisplay: CGRect?
@@ -74,16 +96,85 @@ final class InputController: ObservableObject {
         // the first forwarded movements after switching. Parking needs no suppression.
         CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = 0
         CGDisplayRegisterReconfigurationCallback(displayReconfigured, Unmanaged.passUnretained(self).toOpaque())
+        // Display names come from AppKit, which can update slightly after Core Graphics does.
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.refreshDisplays()
+        }
     }
     deinit {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         CGDisplayRemoveReconfigurationCallback(displayReconfigured, Unmanaged.passUnretained(self).toOpaque())
     }
     fileprivate func refreshDisplays() {
         var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { displayBounds = []; return }
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetActiveDisplayList(count, &displays, &count) == .success else { displayBounds = []; return }
-        displayBounds = displays.prefix(Int(count)).map(CGDisplayBounds)
+        var ids: [CGDirectDisplayID] = []
+        if CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 {
+            ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            if CGGetActiveDisplayList(count, &ids, &count) == .success { ids = Array(ids.prefix(Int(count))) } else { ids = [] }
+        }
+        let screenNumber = NSDeviceDescriptionKey("NSScreenNumber")
+        var found = ids.map { id -> DisplayInfo in
+            let uuid = CGDisplayCreateUUIDFromDisplayID(id).map { CFUUIDCreateString(nil, $0.takeRetainedValue()) as String }
+            let screen = NSScreen.screens.first { ($0.deviceDescription[screenNumber] as? NSNumber)?.uint32Value == id }
+            return DisplayInfo(key: uuid ?? "display-\(id)",
+                               identity: DisplayIdentity(vendor: CGDisplayVendorNumber(id), model: CGDisplayModelNumber(id), serial: CGDisplaySerialNumber(id)),
+                               name: screen?.localizedName ?? "Display", bounds: CGDisplayBounds(id))
+        }
+        // Mirrored displays share one area; keep the first of each.
+        var seen: [CGRect] = []
+        found = found.filter { info in seen.contains(info.bounds) ? false : { seen.append(info.bounds); return true }() }
+        // Identical monitors get a number, left to right, so the picker can tell them apart.
+        let order = found.indices.sorted { (found[$0].bounds.minX, found[$0].bounds.minY) < (found[$1].bounds.minX, found[$1].bounds.minY) }
+        for name in Set(found.map(\.name)) {
+            let same = order.filter { found[$0].name == name }
+            guard same.count > 1 else { continue }
+            for (n, index) in same.enumerated() { found[index].name = "\(name) (\(n + 1))" }
+        }
+        displayBounds = found.map(\.bounds)
+        if let crossed = crossDisplay, !displayBounds.contains(crossed) { crossDisplay = nil }
+        guard found != displays else { return }
+        let identitiesChanged = found.map(\.identity) != displays.map(\.identity)
+        displays = found
+        resolveSharedDisplay()
+        if identitiesChanged { sendDisplays() }
+    }
+    /// Tells the other Mac which monitors this one has. Sent on a heartbeat, which 0.4.0 and
+    /// earlier accept and ignore.
+    private func sendDisplays() {
+        guard paired else { return }
+        var message = WireMessage(.heartbeat)
+        message.displays = displays.prefix(8).map(\.identity)
+        send?(message)
+    }
+    /// Works out which display's edge faces the other Mac: the chosen one, the only one, or the
+    /// one monitor both Macs report being plugged into.
+    private func resolveSharedDisplay() {
+        let result = SharedDisplay.resolve(choice: edgeDisplayChoice, local: displays.map { ($0.key, $0.identity) }, peer: peerDisplays)
+        sharedDisplay = result.resolution
+        var note = ""
+        switch result.source {
+        case .chosen: break
+        case .onlyDisplay: if edgeDisplayChoice != nil && displays.count == 1 { note = "The chosen display is not connected, so this Mac’s only display is used." }
+        case .matchedPeer:
+            if case .display(let index) = result.resolution { note = "Automatic: using \(displays[index].name), which the other Mac is also connected to." }
+        case .undetected:
+            note = paired ? "Automatic could not tell which display is next to the other Mac, so every display’s outer edge on that side switches. Choose the display here."
+                          : "Connect to the other Mac to detect the shared display automatically, or choose it here."
+        case .missing: note = "The chosen display is not connected, so edge switching is paused. Choose another display."
+        }
+        if edgeDisplayNote != note { edgeDisplayNote = note }
+    }
+    /// The display next to the other Mac, when known.
+    private var sharedBounds: CGRect? {
+        if case .display(let index) = sharedDisplay, index < displays.count { return displays[index].bounds }
+        return nil
+    }
+    /// The display whose outer `side` edge the point is against, if that edge may switch control.
+    private func switchingEdgeDisplay(at point: CGPoint, side: ScreenSide) -> CGRect? {
+        guard sharedDisplay != .unavailable,
+              let display = EdgeGeometry.outerEdgeDisplay(at: point, side: side, displays: displayBounds) else { return nil }
+        if let only = sharedBounds, only != display { return nil }
+        return display
     }
     /// Published values are assigned only on change so the 1-second permission poll does not redraw the window.
     private func setStatus(_ text: String) { if status != text { status = text } }
@@ -179,9 +270,11 @@ final class InputController: ObservableObject {
         self.localAddress = localAddress; self.peerAddress = peerAddress
         roles = PairRoles(localID: deviceID, localName: localName, coordinator: coordinator)
         syncRoleUI(); send?(roles!.hello)
+        sendDisplays(); resolveSharedDisplay()
     }
     func disconnected() {
         paired = false; pending = false
+        peerDisplays = []; resolveSharedDisplay()
         restoreCursor(); releaseInjected(); receiving = false
         roles = nil; syncRoleUI()
         if enabled { status = "Connection lost. Keyboard and mouse control this Mac." }
@@ -236,6 +329,8 @@ final class InputController: ObservableObject {
             return
         }
         switch message.kind {
+        case .heartbeat:
+            if let list = message.displays { peerDisplays = list; resolveSharedDisplay() }
         case .takeControl:
             guard roleConfirmed, !keyboardMac, enabled, AXIsProcessTrusted() else {
                 var denied = WireMessage(.denied)
@@ -243,10 +338,14 @@ final class InputController: ObservableObject {
                 send?(denied); return
             }
             releaseInjected(); receiving = true
-            translatedKeys.removeAll(); edgePush.reset(); lastSwitch = ProcessInfo.processInfo.systemUptime
+            translatedKeys.removeAll(); lastSwitch = ProcessInfo.processInfo.systemUptime
             receiverEdge = message.edge.flatMap(ScreenSide.init(rawValue:))?.opposite
+            if let side = receiverEdge {
+                returnPush = (message.push.flatMap(EdgePushLevel.init(rawValue:)) ?? pushLevel).push(for: side)
+            }
+            // The pointer arrives on the display next to the keyboard Mac, when that is known.
             if let side = receiverEdge, let position = message.position,
-               let display = EdgeGeometry.extremeDisplay(side: side, displays: displayBounds) {
+               let display = sharedBounds ?? EdgeGeometry.extremeDisplay(side: side, displays: displayBounds) {
                 moveInjectedPointer(to: EdgeGeometry.point(on: display, side: side, position: position))
             }
             status = "Receiving keyboard and mouse. Control–Option–Escape returns control to the Keyboard Mac."
@@ -272,7 +371,7 @@ final class InputController: ObservableObject {
             guard keyboardMac else { return }
             // An edge return puts the pointer back on the edge it crossed, at the matching position.
             if remote, let position = message.position, let side = edgeSide,
-               let display = crossDisplay ?? EdgeGeometry.extremeDisplay(side: side, displays: displayBounds) {
+               let display = crossDisplay ?? sharedBounds ?? EdgeGeometry.extremeDisplay(side: side, displays: displayBounds) {
                 savedCursor = EdgeGeometry.point(on: display, side: side, position: position)
             }
             returnLocal()
@@ -297,6 +396,7 @@ final class InputController: ObservableObject {
         var take = WireMessage(.takeControl)
         take.edge = edgeSide?.rawValue   // also lets the other Mac return control through its edge
         take.position = edgePosition
+        take.push = pushLevel.rawValue
         send?(take)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             // Only the request that armed this timer may time out; a later request has its own.
@@ -306,7 +406,7 @@ final class InputController: ObservableObject {
         }
     }
     func returnLocal(edgePosition: Double? = nil) {
-        pending = false; edgePush.reset(); lastSwitch = ProcessInfo.processInfo.systemUptime
+        pending = false; edgePush.reset(); returnPush.reset(); lastSwitch = ProcessInfo.processInfo.systemUptime
         if keyboardMac { if paired { send?(.init(.releaseControl)) }; restoreCursor() }
         else {
             releaseInjected(); receiving = false; receiverEdge = nil
@@ -400,19 +500,22 @@ final class InputController: ObservableObject {
         if p.isValid { send?(.init(.input, input: p)) }
         return nil
     }
-    /// Keyboard Mac: a deliberate push against the configured outer edge switches control.
+    /// Keyboard Mac: a deliberate push against the outer edge of the display next to the other Mac
+    /// switches control. The ends of the edge are left alone for hot corners.
     /// Only plain movement counts; a drag in progress never crosses.
     private func checkEdgeCrossing(_ event: CGEvent) {
         guard let side = edgeSide, roleConfirmed, paired, enabled else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastSwitch > 0.5,
-              let display = EdgeGeometry.outerEdgeDisplay(at: event.location, side: side, displays: displayBounds) else {
+              let display = switchingEdgeDisplay(at: event.location, side: side) else {
             edgePush.reset(); return
         }
+        let position = EdgeGeometry.position(of: event.location, on: display, side: side)
+        guard !EdgeGeometry.inCorner(position) else { edgePush.reset(); return }
         let pressure = side.pressure(dx: event.getDoubleValueField(.mouseEventDeltaX), dy: event.getDoubleValueField(.mouseEventDeltaY))
         guard edgePush.push(pressure, now: now) else { return }
         crossDisplay = display
-        toggle(edgePosition: EdgeGeometry.position(of: event.location, on: display, side: side))
+        toggle(edgePosition: position)
     }
     /// Receiving Mac: moves its pointer, with a move event so apps update hover state.
     private func moveInjectedPointer(to point: CGPoint) {
@@ -510,11 +613,12 @@ final class InputController: ObservableObject {
     private func checkEdgeReturn(target: CGPoint, packet p: InputPacket) -> Bool {
         let now = ProcessInfo.processInfo.systemUptime
         guard receiving, let side = receiverEdge, now - lastSwitch > 0.5,
-              let display = EdgeGeometry.outerEdgeDisplay(at: target, side: side, displays: displayBounds) else {
-            edgePush.reset(); return false
+              let display = switchingEdgeDisplay(at: target, side: side) else {
+            returnPush.reset(); return false
         }
-        guard edgePush.push(side.pressure(dx: p.dx, dy: p.dy), now: now) else { return false }
         let position = EdgeGeometry.position(of: target, on: display, side: side)
+        guard !EdgeGeometry.inCorner(position) else { returnPush.reset(); return false }
+        guard returnPush.push(side.pressure(dx: p.dx, dy: p.dy), now: now) else { return false }
         DispatchQueue.main.async { [weak self] in
             self?.returnLocal(edgePosition: position)
             self?.status = "Control returned to the Keyboard Mac through the screen edge."

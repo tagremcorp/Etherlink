@@ -43,6 +43,10 @@ public struct WireMessage: Codable {
     public var position: Double?
     /// granted/denied: a short explanation for the keyboard Mac's status line.
     public var reason: String?
+    /// heartbeat: the sender's monitors, so each Mac can find the one both are plugged into.
+    public var displays: [DisplayIdentity]?
+    /// takeControl: how firm a push returns control through the edge (EdgePushLevel raw value).
+    public var push: String?
     public init(_ kind: Kind, input: InputPacket? = nil) {
         self.kind = kind; self.input = input
     }
@@ -69,7 +73,9 @@ public struct WireDecoder {
                   message.kind != .hello || (message.deviceID != nil && message.deviceName != nil),
                   message.edge.map({ ScreenSide(rawValue: $0) != nil }) ?? true,
                   message.position.map({ $0.isFinite && (0...1).contains($0) }) ?? true,
-                  (message.reason?.count ?? 0) <= 240 else { throw LinkError.invalid("Invalid input message.") }
+                  (message.reason?.count ?? 0) <= 240,
+                  (message.displays?.count ?? 0) <= 8,
+                  message.push.map({ EdgePushLevel(rawValue: $0) != nil }) ?? true else { throw LinkError.invalid("Invalid input message.") }
             lastSequence = message.sequence; result.append(message)
         }
         return result
