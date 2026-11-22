@@ -415,15 +415,21 @@ final class InputController: ObservableObject {
         }
         if enabled { status = keyboardMac ? "Keyboard and mouse control this Mac." : "Ready to receive input." }
     }
-    /// Moves the local pointer to the bottom-right corner of its display and holds it there.
-    /// A background app cannot reliably hide the pointer, and macOS can re-associate mouse and
-    /// pointer (for example after Mission Control), so the hold is re-asserted on each mouse event.
+    /// Hides the local pointer and holds it at a resting spot while the other Mac is controlled.
+    /// An event tap sees each movement only after macOS has already moved the pointer, so the
+    /// pointer is put back on every mouse event; hiding it is what makes that invisible.
     private func parkCursor() {
-        let display = displayBounds.first { $0.contains(savedCursor) } ?? CGDisplayBounds(CGMainDisplayID())
-        parkedCursor = CGPoint(x: display.maxX - 2, y: display.maxY - 2)
+        parkedCursor = Self.restingPoint(displays: displayBounds, near: savedCursor)
         CGWarpMouseCursorPosition(parkedCursor)
         CGAssociateMouseAndMouseCursorPosition(0)
-        if !cursorHidden { CGDisplayHideCursor(CGMainDisplayID()); cursorHidden = true }
+        if !cursorHidden { SystemState.allowBackgroundCursorHiding(); CGDisplayHideCursor(CGMainDisplayID()); cursorHidden = true }
+    }
+    /// Halfway down the right-hand edge of the desktop: away from hot corners, the menu bar and a
+    /// bottom Dock, and with no display beyond it for the pointer to slip onto.
+    static func restingPoint(displays: [CGRect], near point: CGPoint) -> CGPoint {
+        let display = EdgeGeometry.extremeDisplay(side: .right, displays: displays)
+            ?? displays.first { $0.contains(point) } ?? CGDisplayBounds(CGMainDisplayID())
+        return CGPoint(x: display.maxX - 1, y: display.midY)
     }
     private func holdParkedCursor(_ event: CGEvent) {
         CGAssociateMouseAndMouseCursorPosition(0)

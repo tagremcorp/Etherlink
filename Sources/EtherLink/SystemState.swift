@@ -73,6 +73,19 @@ enum SystemState {
         return nil
     }
 
+    /// macOS only lets the frontmost app hide the pointer. EtherLink runs in the background, so it
+    /// asks the window server for the same exception other keyboard-sharing apps use. The functions
+    /// are not in the public SDK, so they are looked up at run time; if a future macOS removes them,
+    /// the pointer simply stays visible at its resting spot.
+    static func allowBackgroundCursorHiding() {
+        typealias DefaultConnection = @convention(c) () -> Int32
+        typealias SetProperty = @convention(c) (Int32, Int32, CFString, CFTypeRef) -> Int32
+        guard let handle = dlopen(nil, RTLD_NOW), let connection = dlsym(handle, "_CGSDefaultConnection"),
+              let setProperty = dlsym(handle, "CGSSetConnectionProperty") else { return }
+        let id = unsafeBitCast(connection, to: DefaultConnection.self)()
+        _ = unsafeBitCast(setProperty, to: SetProperty.self)(id, id, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+    }
+
     /// Whether this Mac's screen is locked (lock screen or screen saver with password).
     static var screenLocked: Bool {
         guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }

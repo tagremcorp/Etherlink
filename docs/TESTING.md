@@ -43,7 +43,8 @@ These run two copies of the app’s headless probe against one Mac’s own Ether
 ## Not yet verified on hardware
 
 - Behaviour under sustained fast input (drag and scroll coalescing under real load), and latency.
-- The parked pointer, menu bar controls and window-close behaviour introduced in v0.3.3.
+- v0.4.2 hiding the local pointer while the other Mac is controlled. In v0.3.3 to v0.4.1 the pointer stayed visible and moved, because macOS only lets the frontmost app hide or freeze it.
+- The menu bar controls and window-close behaviour introduced in v0.3.3.
 - v0.4.1 on a Mac with several displays: switching only at the chosen or detected display’s edge, whether the LG reports the same identity to both Macs in PBP mode, the feel of the three push levels, and corners.
 - v0.4.0 layout matching between two Macs, typing into a password field on the receiving Mac, and the locked-screen and secure-input messages.
 - Sleep and wake, adapter removal and address changes during active control.

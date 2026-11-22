@@ -6,7 +6,7 @@
 
 EtherLink is a native macOS app that forwards keyboard and mouse input from one Mac to another over a cable you choose. Both Macs keep their own Wi-Fi and internet access. EtherLink never falls back to Wi-Fi, never changes routes or network settings, and only talks to the other Mac through the Ethernet adapter and address you select.
 
-> **Status: working prototype (v0.4.1).** Shortcut and screen-edge switching, keyboard, mouse, dragging and scrolling work between two Macs. See [Limitations](#limitations).
+> **Status: working prototype (v0.4.2).** Shortcut and screen-edge switching, keyboard, mouse, dragging and scrolling work between two Macs. See [Limitations](#limitations).
 
 ## Why it exists
 
@@ -28,7 +28,7 @@ The monitor is the reference setup, not a requirement. EtherLink works with any 
 - **Full input forwarding:** keys, modifiers, mouse movement, all buttons, dragging and two-axis scrolling, including trackpad momentum. You can type into password fields on the receiving Mac.
 - **Safe failure.** If the link drops, local control returns immediately and any held keys or buttons are released. A heartbeat watchdog catches silent failures within five seconds.
 - **Menu bar icon** with status, switching, sharing on/off and quit. Closing the window keeps EtherLink running.
-- While you control the other Mac, the local pointer is parked in a screen corner so it does not wander across your display.
+- While you control the other Mac, the local pointer is hidden and held at the right-hand edge of the desktop so it does not wander across your displays. Hiding the pointer from a background app uses a window-server setting that is not part of the public macOS SDK; if a macOS version drops it, the pointer stays visible at that edge.
 
 ## Requirements
 
