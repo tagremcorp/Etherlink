@@ -2,7 +2,7 @@
 
 The original design brief for EtherLink: Mac-to-Mac keyboard and mouse sharing over direct Ethernet.
 
-**Current status (v0.4.2):** milestones 1 and 2 are implemented and in use on two Macs. Milestone 3 is implemented in a simpler form than planned below: one configured side per pair, crossing only at the outer edge of the display next to the other Mac (chosen by hand, or detected as the monitor both Macs report), with a sustained-push requirement, corners excluded and a matching entry position (no per-display edge segments yet). Milestone 4 is partly covered (cable loss, reconnection, sleep, secure input). Milestone 5 is partly done (DMG packaging, stable self-signing); launch at login is not implemented. See [TESTING.md](TESTING.md).
+**Current status (v0.4.3):** milestones 1 and 2 are implemented and in use on two Macs. Milestone 3 is implemented in a simpler form than planned below: one configured side per pair, crossing only at the outer edge of the display next to the other Mac (chosen by hand, or detected as the monitor both Macs report), with a sustained-push requirement, corners excluded and a matching entry position (no per-display edge segments yet). Milestone 4 is partly covered (cable loss, reconnection, sleep, secure input). Milestone 5 is partly done (DMG packaging, stable self-signing); launch at login is not implemented. See [TESTING.md](TESTING.md).
 
 ## Goal
 

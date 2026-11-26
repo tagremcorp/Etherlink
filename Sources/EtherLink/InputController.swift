@@ -73,6 +73,13 @@ final class InputController: ObservableObject {
     private var peerDisplays: [DisplayIdentity] = []
     private var sharedDisplay = SharedDisplay.Resolution.any
     private var screenObserver: NSObjectProtocol?
+    /// Receiving Mac: stay awake while the keyboard Mac is in use, even when control is not here.
+    var keepAwake = true { didSet { if !keepAwake && !receiving { wake.release() } } }
+    /// The other Mac's screen is locked; it needs its own keyboard, Touch ID or Apple Watch.
+    @Published private(set) var peerLocked = false
+    private let wake = WakeKeeper()
+    private var lockObservers: [NSObjectProtocol] = []
+    private var lastActivityPing: TimeInterval = -.infinity
     /// Keyboard Mac: send each key's character so the other Mac can match it on its own layout.
     var translateLayouts = true
     private lazy var layout = KeyboardLayout()
@@ -96,6 +103,11 @@ final class InputController: ObservableObject {
         // the first forwarded movements after switching. Parking needs no suppression.
         CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = 0
         CGDisplayRegisterReconfigurationCallback(displayReconfigured, Unmanaged.passUnretained(self).toOpaque())
+        for name in ["com.apple.screenIsLocked", "com.apple.screenIsUnlocked"] {
+            lockObservers.append(DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
+                self?.sendLockState(note.name.rawValue == "com.apple.screenIsLocked")
+            })
+        }
         // Display names come from AppKit, which can update slightly after Core Graphics does.
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             self?.refreshDisplays()
@@ -103,6 +115,7 @@ final class InputController: ObservableObject {
     }
     deinit {
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        lockObservers.forEach(DistributedNotificationCenter.default().removeObserver)
         CGDisplayRemoveReconfigurationCallback(displayReconfigured, Unmanaged.passUnretained(self).toOpaque())
     }
     fileprivate func refreshDisplays() {
@@ -137,6 +150,21 @@ final class InputController: ObservableObject {
         displays = found
         resolveSharedDisplay()
         if identitiesChanged { sendDisplays() }
+    }
+    /// Tells the other Mac whether this Mac's screen is locked, so it can say so before you switch.
+    private func sendLockState(_ locked: Bool) {
+        guard paired else { return }
+        var message = WireMessage(.heartbeat); message.locked = locked
+        send?(message)
+    }
+    /// Keyboard Mac: while its user is active, the other Mac is told every 20 seconds so its
+    /// display does not sleep and lock while you work here.
+    private func pingActivity() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard paired, roleConfirmed, keyboardMac, now - lastActivityPing >= 20, SystemState.secondsSinceUserInput < 30 else { return }
+        lastActivityPing = now
+        var message = WireMessage(.heartbeat); message.active = true
+        send?(message)
     }
     /// Tells the other Mac which monitors this one has. Sent on a heartbeat, which 0.4.0 and
     /// earlier accept and ignore.
@@ -210,6 +238,7 @@ final class InputController: ObservableObject {
     }
     private func tryEnable() {
         refreshPermissions()
+        pingActivity()
         guard sharingRequested else { return }
         if !accessibilityGranted || !monitoringGranted {
             if enabled { removeTap() }
@@ -271,10 +300,13 @@ final class InputController: ObservableObject {
         roles = PairRoles(localID: deviceID, localName: localName, coordinator: coordinator)
         syncRoleUI(); send?(roles!.hello)
         sendDisplays(); resolveSharedDisplay()
+        sendLockState(SystemState.screenLocked)
     }
     func disconnected() {
         paired = false; pending = false
         peerDisplays = []; resolveSharedDisplay()
+        if peerLocked { peerLocked = false }
+        wake.release(); lastActivityPing = -.infinity
         restoreCursor(); releaseInjected(); receiving = false
         roles = nil; syncRoleUI()
         if enabled { status = "Connection lost. Keyboard and mouse control this Mac." }
@@ -331,6 +363,14 @@ final class InputController: ObservableObject {
         switch message.kind {
         case .heartbeat:
             if let list = message.displays { peerDisplays = list; resolveSharedDisplay() }
+            if let locked = message.locked, locked != peerLocked {
+                peerLocked = locked
+                if keyboardMac, enabled {
+                    status = locked ? "\(peerName) is locked. Unlock it with its own keyboard, Touch ID or Apple Watch; macOS ignores forwarded typing at the lock screen."
+                                    : "\(peerName) is unlocked."
+                }
+            }
+            if message.active == true, keepAwake, roleConfirmed, !keyboardMac { wake.noteActivity() }
         case .takeControl:
             guard roleConfirmed, !keyboardMac, enabled, AXIsProcessTrusted() else {
                 var denied = WireMessage(.denied)
@@ -338,6 +378,7 @@ final class InputController: ObservableObject {
                 send?(denied); return
             }
             releaseInjected(); receiving = true
+            wake.noteActivity(force: true)   // wakes the display if it had gone to sleep
             translatedKeys.removeAll(); lastSwitch = ProcessInfo.processInfo.systemUptime
             receiverEdge = message.edge.flatMap(ScreenSide.init(rawValue:))?.opposite
             if let side = receiverEdge {
@@ -377,6 +418,7 @@ final class InputController: ObservableObject {
             returnLocal()
         case .input:
             guard roleConfirmed, !keyboardMac, receiving, enabled, let input = message.input else { return }
+            wake.noteActivity()
             try inject(input)
         default: break
         }

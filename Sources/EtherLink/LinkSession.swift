@@ -258,7 +258,12 @@ final class LinkSession: ObservableObject {
             }
         }
         io.onStopped = { [weak self] message, retry in
-            DispatchQueue.main.async { guard let self, self.generation == token else { return }; self.stop(message, allowReconnect: retry) }
+            DispatchQueue.main.async {
+                guard let self, self.generation == token else { return }
+                // The listening Mac keeps listening after a failed attempt (a wrong key, or a stray
+                // connection from another program), so one bad connection cannot shut it out for good.
+                self.stop(message, allowReconnect: retry || coordinator)
+            }
         }
         return io
     }

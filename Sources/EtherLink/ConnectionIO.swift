@@ -138,9 +138,11 @@ final class ConnectionIO {
                     let messages = try self.decoder.append(data)
                     if !messages.isEmpty {
                         self.health.received(now: ProcessInfo.processInfo.systemUptime)
-                        self.received += UInt64(messages.filter { $0.kind == .heartbeat }.count)
-                        // A heartbeat carrying a display list is also an update for the input controller.
-                        self.onMessages?(messages.filter { $0.kind != .heartbeat || $0.displays != nil }, self.received)
+                        // A heartbeat carrying display, activity or lock information is a message for
+                        // the input controller. Only plain heartbeats count as link heartbeats.
+                        let plain = messages.filter { $0.kind == .heartbeat && $0.displays == nil && $0.active == nil && $0.locked == nil }.count
+                        self.received += UInt64(plain)
+                        self.onMessages?(messages.filter { $0.kind != .heartbeat || $0.displays != nil || $0.active != nil || $0.locked != nil }, self.received)
                     }
                 }
                 if complete || error != nil { self.fail("Peer disconnected\(error.map { ": \($0)" } ?? "")"); return }

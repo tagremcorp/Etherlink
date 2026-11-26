@@ -45,8 +45,10 @@ struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Image(systemName: input.remote ? "arrow.left.arrow.right.circle.fill"
+              : input.peerLocked ? "lock.fill"
               : session.authenticated ? "cable.connector.horizontal" : "network.slash")
             .accessibilityLabel(input.remote ? "EtherLink: controlling the other Mac"
+                                : input.peerLocked ? "EtherLink: the other Mac is locked"
                                 : session.authenticated ? "EtherLink: connected" : "EtherLink: not connected")
             .onChange(of: input.rolePromptVisible) { visible in
                 if visible { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
@@ -63,6 +65,7 @@ struct MenuBarMenu: View {
         if session.authenticated {
             Text(input.roleConfirmed ? (input.keyboardMac ? "This Mac is the keyboard source" : "This Mac receives input") : "Keyboard source not chosen")
         }
+        if input.peerLocked { Text("\(input.peerName) is locked — unlock it there") }
         Divider()
         if input.keyboardMac {
             Button(input.remote ? "Return Control to This Mac" : "Switch to \(input.peerName)") { input.toggle() }
@@ -97,6 +100,7 @@ struct SetupView: View {
     @AppStorage("edgeDisplay") private var edgeDisplay = ""
     @AppStorage("edgePush") private var edgePush = EdgePushLevel.medium.rawValue
     @AppStorage("translateLayouts") private var translateLayouts = true
+    @AppStorage("keepAwake") private var keepAwake = true
     @AppStorage("adapter") private var adapterID = ""
     @AppStorage("peer") private var peer = ""
     @AppStorage("listen") private var listen = true
@@ -255,6 +259,9 @@ struct SetupView: View {
                         Toggle("Match typed characters across keyboard layouts", isOn: $translateLayouts)
                             .onChange(of: translateLayouts) { value in input.translateLayouts = value }
                         Text("Set this on the keyboard Mac. Each key types the character it shows on this Mac’s layout, even if the other Mac uses a different layout, and shortcuts such as ⌘Z follow the character. Turn it off to send physical key positions instead.").font(.caption).foregroundStyle(.secondary)
+                        Toggle("Keep this Mac awake while the keyboard Mac is in use", isOn: $keepAwake)
+                            .onChange(of: keepAwake) { value in input.keepAwake = value }.accessibilityIdentifier("keepAwake")
+                        Text("Set this on the Mac that receives input. Its display stays on, so it does not sleep and lock, while you are working at the keyboard Mac. It always stays awake while you control it. A locked Mac can only be unlocked with its own keyboard, Touch ID or Apple Watch.").font(.caption).foregroundStyle(.secondary)
                         HStack {
                             Button(input.sharingRequested ? "Disable sharing" : "Enable sharing") {
                                 if input.sharingRequested { input.disable() } else { input.enable() }
@@ -270,6 +277,9 @@ struct SetupView: View {
                             Button("Request missing permissions") { input.requestPermissions() }
                         }
                         Text(input.status).textSelection(.enabled)
+                        if input.peerLocked {
+                            Label("\(input.peerName) is locked. Unlock it with its own keyboard, Touch ID or Apple Watch.", systemImage: "lock.fill").font(.caption).accessibilityIdentifier("peerLocked")
+                        }
                         Text("Enable sharing on both Macs. Allow Accessibility and Input Monitoring when prompted. You can type into password fields on the receiving Mac. While a password field (or Terminal’s Secure Keyboard Entry) is active on the keyboard Mac, macOS hides its keystrokes, so control stays local. The login window, a locked screen and FileVault startup need that Mac’s own keyboard.").font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
@@ -321,6 +331,7 @@ struct SetupView: View {
             input.edgeDisplayChoice = DisplayChoice(stored: edgeDisplay)
             input.pushLevel = EdgePushLevel(rawValue: edgePush) ?? .medium
             input.translateLayouts = translateLayouts
+            input.keepAwake = keepAwake
             input.restoreSharingPreference()
             attemptAutomaticConnection()
             // Show in the Dock and app switcher only while the window is open.

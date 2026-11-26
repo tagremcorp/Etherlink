@@ -141,6 +141,9 @@ extension CoreChecks {
         var firm = WireMessage(.takeControl); firm.push = "firm"
         let firmBack = try roundTrip(firm).first?.push
         try check(firmBack == "firm", "push level survives the wire")
+        var awake = WireMessage(.heartbeat); awake.active = true; awake.locked = false
+        let awakeBack = try roundTrip(awake).first
+        try check(awakeBack?.active == true && awakeBack?.locked == false && awakeBack?.kind == .heartbeat, "activity and lock state survive the wire")
         var badPush = WireMessage(.takeControl); badPush.push = "crushing"
         try rejects("unknown push level") { _ = try roundTrip(badPush) }
         var tooMany = WireMessage(.heartbeat); tooMany.displays = Array(repeating: DisplayIdentity(vendor: 1, model: 1, serial: 1), count: 9)

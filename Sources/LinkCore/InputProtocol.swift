@@ -47,6 +47,10 @@ public struct WireMessage: Codable {
     public var displays: [DisplayIdentity]?
     /// takeControl: how firm a push returns control through the edge (EdgePushLevel raw value).
     public var push: String?
+    /// heartbeat from the keyboard Mac: its user was active recently, so the other Mac stays awake.
+    public var active: Bool?
+    /// heartbeat: whether the sender's screen is locked.
+    public var locked: Bool?
     public init(_ kind: Kind, input: InputPacket? = nil) {
         self.kind = kind; self.input = input
     }

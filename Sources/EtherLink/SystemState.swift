@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import IOKit
+import IOKit.pwr_mgt
 import LinkCore
 
 /// The current keyboard layout, refreshed when the user switches input source. Main thread only.
@@ -57,7 +58,42 @@ final class KeyboardLayout {
     }
 }
 
+/// Keeps this Mac's display awake while it is used from the keyboard Mac. macOS does not count
+/// input posted by an app as user activity, so without this the display sleeps, and then locks,
+/// on its usual idle schedule even while the Mac is being controlled. Main thread only.
+final class WakeKeeper {
+    private var activityAssertion: IOPMAssertionID = 0
+    private var displayAssertion: IOPMAssertionID = 0
+    private var last: TimeInterval = -.infinity
+    /// How long one note keeps the display awake if no further activity arrives.
+    static let hold: TimeInterval = 90
+
+    /// Tells macOS the user is active (this also wakes a sleeping display) and holds the display
+    /// awake for a short while. Cheap to call on every event: it acts at most every ten seconds.
+    func noteActivity(force: Bool = false) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard force || now - last >= 10 else { return }
+        last = now
+        IOPMAssertionDeclareUserActivity("EtherLink: input from the keyboard Mac" as CFString, kIOPMUserActiveLocal, &activityAssertion)
+        // The timed assertion releases itself, so a lost connection can never keep the display on.
+        if displayAssertion != 0 { IOPMAssertionRelease(displayAssertion); displayAssertion = 0 }
+        IOPMAssertionCreateWithDescription(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, "EtherLink" as CFString,
+                                           "This Mac is in use from the keyboard Mac" as CFString, nil, nil,
+                                           Self.hold, kIOPMAssertionTimeoutActionRelease as CFString, &displayAssertion)
+    }
+    func release() {
+        if displayAssertion != 0 { IOPMAssertionRelease(displayAssertion); displayAssertion = 0 }
+        if activityAssertion != 0 { IOPMAssertionRelease(activityAssertion); activityAssertion = 0 }
+        last = -.infinity
+    }
+}
+
 enum SystemState {
+    /// Seconds since the last real keyboard or mouse input on this Mac.
+    static var secondsSinceUserInput: Double {
+        CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
     /// The app holding macOS secure keyboard input (a password field, or Terminal's Secure Keyboard
     /// Entry). While it is on, macOS hides keystrokes from EtherLink's event tap on this Mac.
     static func secureInputOwner() -> String? {

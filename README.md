@@ -6,7 +6,7 @@
 
 EtherLink is a native macOS app that forwards keyboard and mouse input from one Mac to another over a cable you choose. Both Macs keep their own Wi-Fi and internet access. EtherLink never falls back to Wi-Fi, never changes routes or network settings, and only talks to the other Mac through the Ethernet adapter and address you select.
 
-> **Status: working prototype (v0.4.2).** Shortcut and screen-edge switching, keyboard, mouse, dragging and scrolling work between two Macs. See [Limitations](#limitations).
+> **Status: working prototype (v0.4.3).** Shortcut and screen-edge switching, keyboard, mouse, dragging and scrolling work between two Macs. See [Limitations](#limitations).
 
 ## Why it exists
 
@@ -21,6 +21,7 @@ The monitor is the reference setup, not a requirement. EtherLink works with any 
 - **Direct Ethernet only.** Listeners and connections are bound to the selected adapter and IPv4 address. Unplugging the cable drops the link; it never moves to Wi-Fi.
 - **Encrypted pairing.** TLS 1.2 with a 256-bit pre-shared pairing key (AES-128-GCM), generated on one Mac and entered on the other. Keys can be saved in the Keychain.
 - **Automatic reconnection** every five seconds over the selected adapter, after cable unplug, sleep or app restart.
+- **Stays awake while in use.** macOS does not count forwarded input as activity, so the receiving Mac would sleep and lock while you use it. EtherLink keeps its display awake while you control it and, optionally, while you work at the keyboard Mac. A padlock in the menu bar shows when the other Mac is locked.
 - **One coordinated keyboard source.** On first connection both Macs ask which one has the keyboard and mouse; answer on either screen and the pair agrees on exactly one source.
 - **Screen-edge switching.** Push the pointer against the edge facing the other Mac to move there, at the matching height, and push against the facing edge on the other Mac to come back. On a Mac with several displays, only the edge of the display next to the other Mac switches: EtherLink picks the monitor both Macs are plugged into when it can, or you choose it. A brief brush, a pointer thrown at the menu bar or Dock, and the corners of the edge never switch.
 - **Shortcut switching.** Control–Option–F8 by default (or record your own). **Control–Option–Escape** always returns control to the keyboard Mac.
@@ -72,7 +73,7 @@ If a Keychain prompt appears after an update, choose **Always Allow** so EtherLi
 - **Screen edges:** one side and one display per Mac are configured per pair. Automatic display detection relies on both Macs reporting the same monitor identity, which a monitor may not do on every input; choose the display by hand if it does not. Top and bottom edges need a longer push than the sides. Crossing is blocked while a mouse button is held, so drags do not carry between Macs.
 - **Keyboard layouts:** dead-key accents (such as Option-E then E on a US layout) are sent as the accent character and may not combine on the other Mac. Characters the other layout cannot type are sent as text, except with ⌘ or Control held.
 - **Password fields on the keyboard Mac:** while one is focused (or Terminal’s *Secure Keyboard Entry* is on), macOS hides keystrokes from all apps, so control stays local until it ends. EtherLink tells you which app holds secure input. Typing into password fields on the receiving Mac works.
-- **Login window, lock screen and FileVault:** not supported. macOS ignores synthetic input from apps there, and FileVault unlocks before any app runs, so use that Mac’s own keyboard, Touch ID or Apple Watch. EtherLink tells you when the other Mac is locked.
+- **Login window, lock screen and FileVault:** not supported. macOS ignores synthetic input from apps there, and FileVault unlocks before any app runs, so use that Mac’s own keyboard, Touch ID or Apple Watch. EtherLink tells you when the other Mac is locked. To avoid getting locked out, leave **Keep this Mac awake while the keyboard Mac is in use** on, and consider a longer delay in System Settings → Lock Screen.
 - Not notarized; the first launch needs **Open Anyway**.
 - No clipboard sharing, file transfer or screen streaming.
 - No latency measurements have been published.

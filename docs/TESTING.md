@@ -15,14 +15,14 @@ What has been tested, how, and what still has not. Hardware results come from th
 - Screen edges: outer-edge detection with three displays (shared edges never cross), edge positions, entry points, corners, and the push: threshold, reset, slow drift, a pointer thrown at the edge, sustained pushes and firmness levels.
 - Shared display: automatic detection from both Macs’ monitor identities, manual choice, a choice whose system ID changed, disconnected and identical monitors, peers that report no displays.
 - Keyboard layouts: swapped letters (QWERTY/QWERTZ), symbols on different keys and modifiers, keypad preference, unmappable characters.
-- New message fields (edge, position, key text, reason, display list, push level): round trip, validation, and decoding of 0.3.x messages without them.
+- New message fields (edge, position, key text, reason, display list, push level, activity, lock state): round trip, validation, and decoding of 0.3.x messages without them.
 - Keyboard-source negotiation: choice from either Mac, simultaneous conflicting choices, stale acknowledgements, cancellation, restoring and rejecting saved choices.
 
 ## Two-process tests on one Mac
 
 These run two copies of the app’s headless probe against one Mac’s own Ethernet address. They prove socket, binding and TLS behaviour, not cable traffic between two Macs.
 
-- `check.sh <iface> <ip>`: listener bound to the exact address (never a wildcard), matching keys exchange authenticated heartbeats, wrong keys fail TLS on both sides, connecting before the listener is ready recovers by itself, and automatic reconnection after the peer restarts.
+- `check.sh <iface> <ip>`: listener bound to the exact address (never a wildcard), matching keys exchange authenticated heartbeats, wrong keys fail TLS on both sides, connecting before the listener is ready recovers by itself, automatic reconnection after the peer restarts, and a listener that keeps listening after a stray, non-EtherLink connection.
 - `test-role-pair.py`: both peers show the source prompt and confirm opposite roles, whichever side answers, including both at once.
 - `test-ui-stall.py`: TLS and heartbeats survive eight seconds of a blocked UI thread.
 - A second listener on a port already in use reports it once and stops instead of retrying forever.
@@ -47,6 +47,7 @@ These run two copies of the app’s headless probe against one Mac’s own Ether
 - Behaviour under sustained fast input (drag and scroll coalescing under real load), and latency.
 - The menu bar controls and window-close behaviour introduced in v0.3.3.
 - v0.4.1 push levels and corner exclusion by feel, and whether the LG reports the same identity to both Macs in PBP mode (automatic detection).
+- v0.4.3 keeping the receiving Mac awake: that its display no longer sleeps and locks while it is controlled or while the keyboard Mac is in use, that switching to it wakes a sleeping display, whether the screen saver is also held off, and the locked-Mac padlock and message.
 - v0.4.0 layout matching between two Macs, typing into a password field on the receiving Mac, and the locked-screen and secure-input messages.
 - Sleep and wake, adapter removal and address changes during active control.
 - Display reconfiguration while forwarding.

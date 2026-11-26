@@ -81,3 +81,24 @@ def recovery_case(delayed=False):
 
 recovery_case(delayed=True)
 recovery_case()
+
+
+def stray_connection_case():
+    """A connection that is not EtherLink (a port scan, another program) must not stop the listener."""
+    import socket
+    env = {**os.environ, 'ETHERLINK_TEST_KEY': secrets.token_hex(32)}
+    server = subprocess.Popen([binary, '--probe', 'listen', interface, address, address],
+        env={**env, 'ETHERLINK_PROBE_RECONNECT': '1'}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        time.sleep(1.5)
+        with socket.create_connection((address, 49277), timeout=3) as stray:
+            stray.sendall(b'not a TLS handshake\n')
+        time.sleep(8)  # the listener restarts after its five-second retry delay
+        client = subprocess.run([binary, '--probe', 'connect', interface, address, address], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=25)
+        assert 'PASS: authenticated heartbeats' in client.stdout, client.stdout
+        print('PASS: the listener keeps listening after a stray connection')
+    finally:
+        server.terminate(); server.wait()
+
+stray_connection_case()
